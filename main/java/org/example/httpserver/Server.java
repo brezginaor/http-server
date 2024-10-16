@@ -8,19 +8,27 @@ import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.util.Iterator;
+import java.util.function.BiConsumer;
 
 public class Server {
 
     private final String host;
     private final int port;
     private final RouteHandler routeHandler;
+    private volatile boolean ready = false;  // Флаг готовности сервера
+    private volatile boolean running;
+    private Selector selector;
 
     public Server(int port) {
         host = "localhost";
         this.port = port;
         routeHandler = new RouteHandler();
+        this.running = true;
     }
 
+    public boolean isReady() {
+        return ready;
+    }
 
     public void startServer() throws IOException {
 
@@ -31,12 +39,11 @@ public class Server {
             serverChannel.configureBlocking(false);
             serverChannel.register(selector, SelectionKey.OP_ACCEPT);
 
+            ready = true;
 
             initializeRoutes();
-            while (true) {
+            while (running) {
                 selector.select();
-
-
 
 
                 Iterator<SelectionKey> keyIterator = selector.selectedKeys().iterator();
@@ -52,9 +59,23 @@ public class Server {
                     }
                 }
             }
-        }
-    }
 
+        }
+        finally {
+            if (selector != null) {
+                selector.close();  // Закрываем selector
+            }
+        }
+
+        }
+
+    public void stopServer() {
+        running = false;
+        if (selector != null) {
+            selector.wakeup();  // Прерываем блокировку selector
+        }
+        System.out.println("Сервер остановлен.");
+    }
     private void initializeRoutes() {
         routeHandler.addRoute("GET", "/", (req, res) -> {
             try {
@@ -67,6 +88,13 @@ public class Server {
         routeHandler.addRoute("POST", "/data", (req, res) -> {
             try {
                 res.sendText(200, "Data received: " + req.getBody());
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        });
+        routeHandler.addRoute("POST", "/submit", (req, res) -> {
+            try {
+                res.sendText(200, "Received POST request !!!");
             } catch (IOException e) {
                 e.printStackTrace();
             }
@@ -98,7 +126,7 @@ public class Server {
 
         routeHandler.setDefaultRoute((req, res) -> {
             try {
-                res.sendText(404, "Not Found: No handler for " + req.getMethod() + " " + req.getPath());
+                res.sendText(404, "Not Found");
             } catch (IOException e) {
                 e.printStackTrace();
             }
@@ -128,29 +156,29 @@ public class Server {
         ServerRequest request = ServerRequest.parse(requestDataStr);
         ServerResponse response = new ServerResponse(clientChannel);
 
-        switch (request.getMethod()) {
-            case "GET":
-                response.sendText(200, "Received GET request !!!");
-                break;
-            case "POST":
-                response.sendText(200, "Received POST request !!! Body is: " + request.getBody());
-                break;
-            case "PUT":
-                response.sendText(200, "Received PUT request with body: " + request.getBody());
-                break;
-            case "PATCH":
-                response.sendText(200, "Received PATCH request with body: " + request.getBody());
-                break;
-            case "DELETE":
-                response.sendText(200, "Received DELETE request");
-                break;
-            default:
-                response.sendText(404, "Not Found");
-                break;
+        // Получаем обработчик для маршрута
+        BiConsumer<ServerRequest, ServerResponse> routeHandler = this.routeHandler.getHandler(request.getMethod(), request.getPath());
+
+        if (routeHandler != null) {
+            // Если обработчик найден, вызываем его
+            System.out.println("Обработчик найден для: " + request.getPath());
+            routeHandler.accept(request, response);
+        } else {
+            // Если обработчик не найден, используем обработчик по умолчанию
+            System.out.println("Обработчик не найден для: " + request.getPath() + ". Используем маршрут по умолчанию.");
+            this.routeHandler.getDefaultRoute().accept(request, response);
+            //response.sendText(404, "Not Found");
         }
 
 
+    }
 
+    public void addRoute(String method, String path, BiConsumer<ServerRequest, ServerResponse> handler) {
+        routeHandler.addRoute(method, path, handler);
+    }
+
+    public void setDefaultRoute(BiConsumer<ServerRequest, ServerResponse> defaultRoute) {
+        routeHandler.setDefaultRoute(defaultRoute);
     }
 
 

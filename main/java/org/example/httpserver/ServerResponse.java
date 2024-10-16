@@ -16,7 +16,7 @@ public class ServerResponse {
     public void sendText(int code, String responseBody) throws IOException {
         String response = createResponse(code, "text/plain", responseBody);
         sendResponse(response);
-        clientChannel.close();
+        //clientChannel.close();
     }
 
     private String createResponse(int code, String contentType, String responseBody) {
@@ -37,8 +37,11 @@ public class ServerResponse {
 
     private void sendResponse(String response) throws IOException {
         ByteBuffer buffer = ByteBuffer.wrap(response.getBytes());
-        clientChannel.write(buffer);
-        clientChannel.close();
+        while (buffer.hasRemaining()) {
+            clientChannel.write(buffer);
+        }
+        clientChannel.shutdownOutput(); // Закрываем выходной поток корректно
+        clientChannel.close();  // Закрываем соединение
     }
 
     private String getCodeStr(int code) {
